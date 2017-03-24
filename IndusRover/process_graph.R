@@ -33,7 +33,13 @@ ind2rc <- function(ind,sz=9)
 {
   rind <- as.vector(floor(ind/sz))
   cind <- as.vector(ind-(sz*rind))
-  rind <- rind+1
+  if(cind==0)
+  {
+    cind = sz
+  } else {
+    rind <- rind+1  
+  }
+  
   return(rbind(rind,cind))
 }
 
@@ -75,6 +81,44 @@ getKnightPath <- function(currPos,nextMove)
     path[kk] <- rc2ind(i,j)
   }
   return(path)
+}
+
+move2stringWithMaxReward <-function(currPos,nextPos)
+{
+  a1 <- ind2rc(currPos)
+  b1 <- ind2rc(nextPos)
+  dff <- b1-a1
+  i <- dff[1]
+  j <- dff[2]
+  
+  m1 <- rep("S",abs(i))
+  if(i<0){
+    m1 <- rep("N",abs(i))
+  }
+  
+  if(j<0){
+    m1 <- c(m1,rep("W",abs(j)))
+  } else {
+    m1 <- c(m1,rep("E",abs(j)))
+  }
+  
+  p1 <- getKnightPath(ind2rc(currPos),m1)
+  p2 <- getKnightPath(ind2rc(currPos),rev(m1))
+  r1 <- sum(reward[p1])
+  r2 <- sum(reward[p2])
+  
+  move <- m1
+  
+  if(is.na(r1)){
+    move <- rev(m1)
+  } else if(is.na(r2)){
+    move <- m1 
+  } else{
+    if(r1 < r2){
+      move <- m1
+    }
+  }
+  return(move)
 }
 
 getKnightPathMaxReward <- function(currPos,nextMove)
@@ -153,8 +197,176 @@ adj.sub <- adj[-ind,]
 adj.sub <- adj.sub[,-ind]
 
 write.table(adj.sub,"AdjReward.csv",col.names = FALSE,row.names=FALSE,sep=",")
+write.table(colnames(adj.sub),"AdjRewardIndexes.csv",col.names = FALSE,row.names=FALSE,sep=",")
 
 
+checkAndGetValidPath <- function(soln)
+{
+  k <- length(soln)
+  origin <- soln[1]
+  
+  originNN <- c(22,24,58,60,52,30,48)
+  currIndex <-origin
+  ind = 1
+  valid = TRUE
+  while(valid & (ind<k))
+  {
+    ind = ind+1
+    nextIndex = soln[ind]
+    valid = checkMove(currIndex,nextIndex)
+    if(!valid){
+      print("Failed at:")
+      print(c(currIndex,nextIndex))
+    }
+    currIndex = nextIndex
+  }
+  if(ind==k){
+    print("tour is valid");
+    link <- list(valid=valid,path=path)
+    # assume last index is always the orgin
+  } else {
+    # try recovering
+    ind = ind-1
+    # check if a path exists between the latest-in-the-valid-path and origin
+    valid_path = soln[1:ind]
+    link <- checkMoveWithNN(valid_path)
+  }
+  return(link)
+}
+
+checkMove<-function(currIndex,nextIndex)
+{
+  a1 <- ind2rc(currIndex)
+  b1 <- ind2rc(nextIndex)
+  d = sum((b1-a1)^2)
+  return( ifelse(abs(d-5)<1e-1,TRUE,FALSE))
+}
+
+checkMoveWithNN <- function(valid_path)
+{
+  
+  originNN <- c(22,24,58,60,52,30,48)
+  nn <- length(valid_path)
+  mm <- length(originNN)
+  valid =  FALSE
+  ind=nn
+  while( (!valid) & ind>1)
+  {
+    nextIndex = valid_path[ind]
+    if( (nextIndex %in% originNN ) )
+    {
+      # found match
+      valid = TRUE
+      valid_path <- c(valid_path[1:(ind-1)],nextIndex,41)
+    }
+    ind <- ind-1
+  }
+  
+  # if above fails, see if orgin can be directly linked
+  if(!valid)
+  {
+    ind = nn
+    while ((!valid) & ind>1)
+    {
+      nextIndex = valid_path[ind]
+      valid = checkMove(nextIndex,41)
+      ind = ind-1
+    }
+    if(valid){
+      valid_path <- c(valid_path[1:ind],41)
+    }
+  }
+  return(list(valid=valid,path=valid_path))
+}
+
+scoreTour <- function(path)
+{
+  mm <- length(path)
+  score = 0
+  for(ii in 2:mm){
+    score = score + adj[path[ii-1],path[ii]]
+  }
+  return(score)
+}
+
+
+path2string <-function(path)
+{
+  mm <- length(path)
+  msg <- c()
+  for (kk in 1:(mm-2))
+  {
+    move <- paste(move2stringWithMaxReward(path[kk],path[kk+1]),sep="",collapse=",")
+    msg <- paste(c(msg,move),sep="",collapse="|")
+  }
+  move <- paste(move2stringWithMaxReward(path[mm-1],path[mm]),sep="",collapse=",")
+  msg <- paste(c(msg,move),sep="",collapse="|")
+}
+
+
+soln <- c(38,44,29,11,4,22,12,19,34,52,68,61,45,63,70,59,53,35,51,69,62,46,40,30,36,54,47,41,31,21,2,9,20,26,10,28,18,1,3,14,7,25,15,8,24,42,48,64,71,60,43,27,37,55,39,49,33,16,5,23,13,6,17,32,50,66,72,57,67,73,56,38)
+soln <- as.numeric(colnames(adj.sub)[soln])
+
+
+res <- readLines("TourSampling-01.csv")
+mm <- length(res)
+
+bestScore = 0
+bestPath = c()
+bestMsg = 0
+for (ii in 1:mm)
+{
+  cat("Iternation: ",ii)
+  soln <- as.numeric(unlist(strsplit(gsub("\\]","",gsub("\\[","",res[[ii]])),",")))
+  soln <- as.numeric(colnames(adj.sub)[soln])
+  link <- checkAndGetValidPath(soln)
+  if(link$valid)
+  {
+    path <- link$path
+    score <- scoreTour(path)
+    msg <- path2string(path)
+    cat("score: ",score,"\n")
+    if(score > bestScore)
+    {
+      bestScore = score
+      bestPath = path
+      bestMsg = msg
+      bestInd = ii
+  
+    }
+  }
+}
+
+write.table(noquote(bestMsg),"BestOutPut-02.txt",row.names = F,col.names = F,sep=",",quote=F)
+
+soln <- readLines("BestOutPut-01.txt")
+soln <- unlist(strsplit(soln,"|"))
+path = c(41)
+i=5;j=5;
+mm = length(soln)
+for (ii in 1:mm)
+{
+  nextPos = soln[ii]
+  if(nextPos == ","){
+    print("skip")
+  } else if (nextPos == "E") {
+    j=j+1
+  } else if(nextPos=="W"){
+    j = j-1
+  } else if(nextPos=="N") {
+    i = i-1
+  } else if(nextPos=="S"){
+    i = i+1
+  } else if (nextPos=="|"){
+    nextMove = rc2ind(i,j)
+    path = c(path,nextMove)
+  } else {
+      cat("error")
+  }
+}
+nextMove = rc2ind(i,j)
+path = c(path,nextMove)
+cat(path)
              
 
 
